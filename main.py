@@ -11,29 +11,62 @@ bot = Bot(token=API_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-async def ask_gpt(text):
+# Словари для хранения истории сообщений и состояния бота
+user_histories = {}
+user_states = {}
+
+async def ask_gpt(user_id, text, temperature=0.3):
     try:
+        if user_id not in user_histories:
+            user_histories[user_id] = []
+
+        user_histories[user_id].append({"role": "user", "content": text})
+
         response = g4f.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": text}]
+            model="gpt-4o",
+            messages=user_histories[user_id],
+            temperature=temperature
         )
-        # Проверяем, что ответ от g4f не пустой
+
         if isinstance(response, str):
-            return response  # Если ответ строка, возвращаем его
-        return response['choices'][0]['message']['content']  # Если это объект, получаем контент
+            bot_response = response
+        else:
+            bot_response = response['choices'][0]['message']['content']
+
+        user_histories[user_id].append({"role": "assistant", "content": bot_response})
+        return bot_response
+
     except Exception as e:
         logging.error(f"Error in ask_gpt: {e}")
         return "Извините, произошла ошибка при обработке вашего запроса."
 
-@dp.message(Command('start'))  # Используем Command для фильтра
+@dp.message(Command('start'))
 async def send_welcome(message: types.Message):
-    await message.reply("Привет! Я бот, который поможет тебе. Напиши что-нибудь!")
+    user_id = message.from_user.id
+    user_states[user_id] = True  # Включаем генерацию по умолчанию
+    await message.reply("Привет! Я Chat-GPT с памятью. Напиши что-нибудь!")
 
-@dp.message()  # Обрабатываем любые текстовые сообщения
+@dp.message(Command('off'))
+async def turn_off(message: types.Message):
+    user_id = message.from_user.id
+    user_states[user_id] = False  # Отключаем генерацию
+    await message.reply("Бот отключен. Я не буду генерировать ответы.")
+
+@dp.message(Command('on'))
+async def turn_on(message: types.Message):
+    user_id = message.from_user.id
+    user_states[user_id] = True  # Включаем генерацию
+    await message.reply("Бот снова включен. Напиши что-нибудь!")
+
+@dp.message()
 async def handle_message(message: types.Message):
-    text = message.text
-    response = await ask_gpt(text)
-    await message.reply(response)
+    user_id = message.from_user.id
+    text = message.text.lower()
+
+    # Обрабатываем все остальные сообщения с помощью GPT
+    if user_states.get(user_id, True):  # По умолчанию бот включен
+        response = await ask_gpt(user_id, text)
+        await message.reply(response)
 
 async def main():
     await dp.start_polling(bot)
